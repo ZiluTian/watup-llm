@@ -1,12 +1,26 @@
 # WATuP-LLM
 
-LLM fine-tuning and low-latency inference pipeline.
+A collection of self-contained studies in **LLM inference engineering** — CUDA kernel design, the decode hot path, quantization, and the performance analysis that connects them. Each folder is a standalone experiment with its own README, build, source, and raw results.
 
-> **Work in progress** — the full pipeline, models, and evaluation scripts are being added.
+## Contents
 
-## What this covers
+| Folder | Study |
+|--------|-------|
+| [`decode-hotpath/`](decode-hotpath/) | The decode linear layer (`y = W @ x`, batch-1 GEMV) — the single most important op in single-user LLM inference. Twelve CUDA kernels as an optimization ladder (coalescing → fp16/int8/int4 quantization → DP4A → vectorization), a batched-decode sweep (register blocking, lane-owned batches, smem tiling), a cache-cold measurement methodology, and a guided tutorial. Includes raw benchmark logs (RTX 5090). |
 
-- Fine-tuning open-weight LLMs with parameter-efficient methods (LoRA / QLoRA)
-- A lightweight RAG inference service tuned for production-like latency constraints
-- Model quantization and operator-level optimizations to reduce memory footprint on constrained hardware
-- Precision / speed / resource-utilization trade-off evaluation across inference workloads
+More folders are on the way.
+
+## Conventions
+
+Each study folder follows the same shape so results are easy to compare and reproduce:
+
+```
+<study>/
+  README.md          what, why, headline results, how to build & run
+  src/               the experiment (kernels, models, harness)
+  docs/              guided walkthroughs and derivations
+  results/           raw benchmark logs, tagged by GPU & shape
+  Makefile           build (if compiled)
+```
+
+Every reported number names the device, shape, and (where relevant) the measurement methodology, so a result can be re-derived on different hardware.

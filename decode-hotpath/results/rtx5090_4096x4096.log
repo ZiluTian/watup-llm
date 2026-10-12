@@ -1,0 +1,50 @@
+Decode hot path: y = W @ x,  W is 4096 x 4096 (67.1 MB in fp32)
+
+Device: NVIDIA GeForce RTX 5090   Peak HBM BW: 1792 GB/s   L2 cache: 100.7 MB
+
+  [v0] rotating over 6 x 67.1 MB copies to defeat L2
+kernel                       ms         GB/s      %peak      speedup rel.err vs fp32
+v0 naive fp32            0.7438         90.2       5.0%        1.00x       0.0001%
+v1 warp fp32             0.0894        750.4      41.9%        8.32x       0.0000%
+v2 warp fp16             0.0229       1466.9      81.9%       32.51x       0.0205%
+v3 warp int8             0.0128       1309.3      73.1%       57.98x       0.8530%
+v4 warp int4             0.0149        705.1      39.3%       50.02x       9.2413%
+v5 block smem fp16       0.0906        370.6      20.7%        8.21x       0.0205%
+v6 dp4a int8             0.0125       1338.9      74.7%       59.30x       1.1934%
+v7 ilp int4              0.0125        836.3      46.7%       59.32x       9.2413%
+v8 vec int4              0.0084       1249.7      69.7%       88.64x       9.2413%
+
+Read this as: v0->v1 is pure engineering (same bytes, fixed access
+pattern). v1->v2->v3->v4 is bytes-moved reduction, each step trading
+some accuracy (rightmost column) for bandwidth. v5-v7 move the SAME
+bytes as v2/v3/v4 respectively -- any speedup there is purely from
+better latency hiding (v5's extra threads/row, v6's DP4A instruction,
+v7's independent accumulators), not from reading less data. If v5-v7
+don't beat their v2/v3/v4 counterparts on your GPU, that's a real
+result too: it means those kernels were already latency-hidden well
+enough that the extra complexity wasn't the bottleneck.
+
+--- v11/v12/v13: batched decode (fp16), sweeping batch size ---
+        B <= 4: v11 register-blocked (B accumulators per lane in registers)
+        B >= 8: v11 (if B<=16) / v12 lane-owned / v13 smem-tiled probed, winner shown
+B    kernel                 ms         GB/s      %peak  throughput(req/s)      rel.err
+1    v11 reg-block      0.0229       1467.9      81.9%              43747      0.0207%
+2    v11 reg-block      0.0231       1455.1      81.2%              86728      0.0203%
+4    v11 reg-block      0.0309       1086.2      60.6%             129480      0.0207%
+8    v11 reg-block      0.1926        174.2       9.7%              41532      0.0208%
+16   v13 smem-tile      0.5355         62.7       3.5%              29877      0.0207%
+32   v13 smem-tile      0.5327         63.0       3.5%              60073      0.0208%
+64   v13 smem-tile      0.4736         70.9       4.0%             135144      0.0207%
+128  v13 smem-tile      1.4473         23.2       1.3%              88442      0.0208%
+
+Read the sweep as: at B=1-4 GB/s stays near the B=1 fp16 level (weights read
+once per launch) and throughput(req/s) climbs ~linearly in B -- the cheap win
+of continuous batching. From B=8 on, every output row has to touch the whole
+batched activation vector (in_dim x B floats), and that x traffic -- plus
+SIMT instruction issue, not weight bandwidth or FLOPs -- becomes the wall:
+watch throughput per request (req/s / B) fall off and %peak sag. The designs
+in this file all stop at the same wall from different angles (v11: x re-read
+per row from L2; v12: in_dim address computations per lane; v13: smem loads
+per (column, entry) pair). What breaks through it is tensor-core GEMM -- the
+same tiling as v13 with m16n8k16 MMAs reusing each x row across 16 output
+rows per instruction -- which is what cuBLAS / vLLM actually run at large B.
