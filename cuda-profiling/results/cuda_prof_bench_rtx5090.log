@@ -1,0 +1,117 @@
+python3 src/cuda_prof_bench.py
+============================================================================
+CUDA profiling tools benchmark
+torch 2.10.0+cu128 | NVIDIA GeForce RTX 5090 (sm_120) | B=128 D=4096 N=150
+============================================================================
+
+[1/8] Building state + CUDA-event oracle ...
+    per-region device time (us/iter):
+      h2d            41.0 us  (16.4%)
+      gemm          174.3 us  (69.5%)
+      pointwise      11.1 us  ( 4.4%)
+      reduce         15.8 us  ( 6.3%)
+      d2h             8.7 us  ( 3.5%)
+      TOTAL         250.9 us
+
+[2/8] Wall-clock passes ...
+    nosync 1 iter   :     37.0 us (measures CPU launch only; async tail escapes)
+    sync   1 iter   :    245.0 us
+    loop, final sync:     37.1 ms (248 us/iter)
+    loop, sync/iter :     36.8 ms (246 us/iter; sync cost 0.99x)
+    trap: nosync under-reports a full iteration by 6.6x
+    GPU busy fraction (oracle wall / loop wall): 101.4%
+
+[3/8] cProfile on the torch loop ...
+    overhead 1.00x ; top CPU entries (cumulative):
+      run_loop                                               37.1 ms
+      synchronize                                            25.3 ms
+      <built-in method torch._C._cuda_synchronize>           25.2 ms
+      region_gemm                                             5.4 ms
+      region_pointwise                                        3.8 ms
+
+[4/8] torch.profiler (kineto) ...
+    overhead 1.32x ; region attribution vs oracle (coverage 99.3%):
+      h2d        oracle      41.0 us  torchprof      37.7 us  err   8.1%
+      gemm       oracle     174.3 us  torchprof     164.8 us  err   5.5%
+      pointwise  oracle      11.1 us  torchprof       6.2 us  err  44.4%
+      reduce     oracle      15.8 us  torchprof      10.3 us  err  34.3%
+      d2h        oracle       8.7 us  torchprof       5.1 us  err  41.6%
+    top kernels (us/iter):
+      void cutlass::Kernel2<cutlass_80_simt_sgemm_128x128_    164.8 us
+      Memcpy HtoD (Pinned -> Device)                           37.7 us
+      void at::native::reduce_kernel<128, 4, at::native::R      8.2 us
+      Memcpy DtoH (Device -> Pinned)                            5.1 us
+      void at::native::elementwise_kernel<128, 2, at::nati      2.3 us
+    note: kernel-profiler times are pure kernel-busy; the event
+          oracle brackets each region, so it also counts inter-
+          kernel gaps + ~4-5us/event-pair overhead. The 'err' is
+          smallest for one big kernel (gemm) and largest for the
+          small multi-kernel regions (pointwise/reduce/d2h).
+
+[5/8] py-spy (external CPU sampling of the launch side) ...
+    samples 993 in 5s window; round-wall overhead 1.003x
+      h2d          0.8% of CPU samples
+      gemm        10.3% of CPU samples
+      pointwise    7.9% of CPU samples
+      reduce       4.1% of CPU samples
+      d2h          2.5% of CPU samples
+
+[6/8] nsys (Nsight Systems, external) ...
+    round-wall overhead 1.006x ; region attribution vs child oracle (coverage 99.3%):
+      h2d        oracle      41.7 us  nsys      37.7 us  err   9.6%
+      gemm       oracle     176.7 us  nsys     166.0 us  err   6.1%
+      pointwise  oracle      13.7 us  nsys       6.2 us  err  54.5%
+      reduce     oracle      15.8 us  nsys      10.4 us  err  34.2%
+      d2h        oracle       9.2 us  nsys       5.1 us  err  44.7%
+    top kernels (total over recording):
+      void cutlass::Kernel2<cutlass_80_simt_sgemm_128x128_  3070280.4 us
+      void at::native::reduce_kernel<(int)128, (int)4, at:   153222.7 us
+      void at::native::elementwise_kernel<(int)128, (int)2    43478.5 us
+      void at::native::elementwise_kernel<(int)128, (int)2    43419.2 us
+      void at::native::elementwise_kernel<(int)128, (int)2    39604.0 us
+
+[7/8] ncu (Nsight Compute, kernel metrics, replay) ...
+    ncu: GPU performance-counter permission denied (ERR_NVGPUCTRPERM) - ncu needs root/CAP_SYS_ADMIN
+           {"done": true, "oracle": {"h2d": 44.15786647134357, "gemm": 257.009067
+           ==PROF== Disconnected from process 2835715
+
+[8/8] Device memory (the story RSS never tells) ...
+    device peak allocated     151.2 MiB (reserved 157.3 MiB)
+    host max RSS             1081.4 MiB (CUDA context + pinned buffers only)
+
+============================================================================
+WHAT EACH TOOL SEES AS 'THE HOT THING'  (oracle: gemm owns 69% of GPU time)
+============================================================================
+  wall_nosync : a single iteration = 37.0 us  (7x under-report)
+  cProfile    : run_loop (CPU-side launch, 37099 us over 150 iters) - says nothing about the GPU
+  py-spy      : gemm owns 10% of CPU samples (launch side; GPU invisible)
+  torch.profiler: void cutlass::Kernel2<cutlass_80_simt_sgemm_ (164.8 us/iter) - right kernel, right time
+  nsys        : void cutlass::Kernel2<cutlass_80_simt_sgemm_ (166.0 us/iter averaged over the recording)
+  device mem  : 151 MiB on the device, invisible to host RSS tools
+
+============================================================================
+Usability rubric (1-5 per axis)
+============================================================================
+    tool             setup gran act scope mach  -> score/5
+    wall_nosync      5     1   1   1    5   -> 2.20
+    wall_sync        5     1   2   2    5   -> 2.65
+    cProfile         5     3   2   2    4   -> 3.00
+    py-spy           3     3   3   3    4   -> 3.15
+    torch.profiler   4     5   5   5    4   -> 4.70
+    nsys             3     5   4   5    4   -> 4.25
+    ncu              3     5   5   2    4   -> 4.10
+
+============================================================================
+FINAL SCORECARD
+============================================================================
+    tool              overhead   accuracy usability   verdict
+    wall_nosync           1.00       15.1      2.20   looks fast because it misses the async GPU tail - never ship this
+    wall_sync             1.00       98.7      2.65   right total, no attribution; the baseline everything else is checked against
+    cProfile              1.00          -      3.00   sees the CPU launch cost of aten ops; blind to kernels
+    py-spy                1.00          -      3.15   near-zero-cost CPU view of the launch side; attach to live processes
+    torch.profiler        1.32       65.7      4.70   per-kernel GPU times + CPU ops + chrome trace; in-process
+    nsys                  1.01       65.8      4.25   whole-process CPU+GPU timeline, near-zero overhead, CSV stats
+    ncu                      -          -      4.10   per-kernel hardware metrics (throughput %, occupancy); needs counter permission + replay
+
+    JSON: /home/ruby.tian/local_tests/results/cuda_prof_bench.json
+done.

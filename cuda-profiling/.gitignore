@@ -1,0 +1,10 @@
+bin/
+.scratch/
+*.o
+*.swp
+*~
+__pycache__/
+# regenerable nsys binary artifacts (keep the .log / .json summaries)
+*.nsys-rep
+*.sqlite
+*.nvsc

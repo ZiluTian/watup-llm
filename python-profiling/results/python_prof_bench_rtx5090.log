@@ -1,0 +1,109 @@
+python3 src/python_prof_bench.py
+============================================================================
+Python profiling methods benchmark
+python 3.12.11 | scale=1.0 | numpy=True
+============================================================================
+
+[1/7] Calibrating unit costs (perf_counter, gc on, median of 5) ...
+    add3 iter             42.4 ns
+    alloc iter            52.5 ns
+    alloc_big item       146.7 us
+    csum(1M) call          4.3 ms
+    json(100KB) call     209.0 us
+    re(100KB) call       314.9 us
+    mm(1024^3) call        7.8 ms
+    gen iter              22.2 ns
+    call+op iter          20.2 ns
+    tree(8) item          25.9 us
+    read(64KB) call        1.5 us
+    sleep(0.5ms)         552.0 us
+    alloc gross bytes/item (tracemalloc)     88.1 B
+
+[2/7] Bare baselines (perf_counter, median of 3) ...
+    W1_tight_loop       47.0 ms
+    W2_alloc            38.8 ms
+    W3_c_ext           626.6 ms
+    W4_dispatch         49.1 ms
+    W5_recursion        19.7 ms
+    W6_io              331.8 ms
+    W7_gen              24.8 ms
+    W8_vec            1552.6 ms
+
+[3/7] Per-method passes ...
+    cProfile done
+    line_profiler done (reduced sizes: x0.1 python-loop, x0.25 event-driven; accuracy is scale-invariant)
+    tracemalloc done
+    timeit done
+    resource: W6 wall 331 ms vs cpu 2 ms -> CPU busy fraction 0.6%
+    memory_profiler done (W2 at 5% churn + full big-alloc)
+    py-spy: baseline child + 2 x 6 s recordings (~25 s) ...
+    py-spy: 1075 samples in 6s window, unattributed 2.7%, round-wall overhead 1.005x
+
+============================================================================
+[4/7] Accuracy vs ground truth  (per-region relative error)
+============================================================================
+    cProfile       abs median |err| 5.4% (worst 520.5%) | share median |err| 7.4%  score  92.6/100  (n=8 workloads)
+    line_profiler  abs median |err| 500.0% (worst 3059.6%) | share median |err| 49.1%  score  50.9/100  (n=8 workloads)
+    py-spy         abs median |err| 159.3% (worst 514.4%) | share median |err| 26.0%  score  74.0/100  (n=7 workloads)
+    wall           (total time only) median |err| 3.6%  score  96.4/100
+    timeit         (total time only) median |err| 5.1%  score  94.9/100
+    tracemalloc    (W2 alloc bytes) median |err| 8.6%  score  91.4/100
+    memory_profiler (W2 peak RSS delta) median |err| 100.0%  score   0.0/100
+        w2_a=0.0 MiB, w2_b=0.0 MiB, w2_big=15.9 MiB, w2_c=0.0 MiB
+    resource       (CPU time) median |err| 0.6%  score  99.4/100
+
+    top-1 hot-region hit rate (does the method's #1 region match ground truth?):
+    cProfile       5/8
+    line_profiler  4/8
+    py-spy         6/7
+
+============================================================================
+[5/7] Overhead (wall-clock ratio vs bare; >1 = slowdown)
+============================================================================
+    method           W1_tight_l   W2_alloc   W3_c_ext W4_dispatc W5_recursi      W6_io     W7_gen     W8_vec
+    wall                   1.00       1.00       1.00       1.00       1.00       1.00       1.00       1.00   geomean 1.00x
+    cProfile               0.99       2.03       1.00       2.48       3.10       1.00       2.17       1.01   geomean 1.55x
+    timeit                 0.95       0.67       0.93       1.00       0.99       1.00       1.01       0.98   geomean 0.93x
+    line_profiler          8.10       2.33       1.01      15.19      12.24       1.01      13.51       1.05   geomean 3.87x
+    tracemalloc           12.05       5.96       1.40      12.76       9.03       1.00      12.79       1.12   geomean 4.49x
+    memory_profiler           -     107.49          -          -          -          -          -          -   geomean 107.49x
+    py-spy             (external sampler; whole-child wall ratio 1.01x, incl. sampling stops)
+
+============================================================================
+[6/7] Instrumentation-overhead trap: same work, different call granularity
+============================================================================
+    600k add3 ops, one function   : bare   24.7 ms | cProfile   24.6 ms (1.00x)
+    600k add3 ops, 200k tiny calls: bare   27.2 ms | cProfile   43.0 ms (1.58x)
+    real call-overhead (bare)      : 1.10x ; cProfile amplifies to 1.75x relative ranking inflation 1.6x
+
+============================================================================
+[7/7] Usability rubric (1-5 per axis; weights in parens)
+============================================================================
+    method           setup gran act scope mach  -> score/5
+    wall             5     1   1   2    5   -> 2.35
+    timeit           5     2   2   1    5   -> 2.75
+    cProfile         5     4   4   3    4   -> 4.00
+    line_profiler    3     5   5   2    3   -> 3.95
+    tracemalloc      4     4   4   3    4   -> 3.85
+    memory_profiler  3     4   3   3    2   -> 3.10
+    py-spy           3     4   4   4    4   -> 3.85
+    resource         5     1   2   2    5   -> 2.65
+
+============================================================================
+FINAL SCORECARD
+============================================================================
+    method            overhead   accuracy usability   verdict
+    wall                  1.00       96.4      2.35   answers 'how long', never 'why' - gating, not diagnosis
+    timeit                0.93       94.9      2.75   micro-benchmark, not a profiler
+    cProfile              1.55       92.6      4.00   first-stop function-level answer; watch call-count overhead on dispatch-heavy code
+    line_profiler         3.87       50.9      3.95   targeted line-level drill-down after cProfile; never whole-program
+    tracemalloc           4.49       91.4      3.85   the memory tool: who allocates what, retained vs gross
+    memory_profiler     107.49        0.0      3.10   coarse RSS story incl. C-extension memory; blind to churn
+    py-spy                1.01       74.0      3.85   zero-distortion sampling across threads; attach to live processes; blind to GPU and C internals
+    resource                 -       99.4      2.65   one-liner sanity check: CPU vs wall, peak RSS
+
+    [informational] W9 threads: 4 threads x 200k iters + main 200k
+        wall 43 ms, process CPU 42 ms (GIL: CPU ~ wall). cProfile: main thread only; py-spy: all threads.
+
+    JSON: /home/ruby.tian/local_tests/results/python_prof_bench.json
+done.

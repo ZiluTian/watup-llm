@@ -7,6 +7,8 @@ A collection of self-contained studies in **LLM inference engineering** — CUDA
 | Folder | Study |
 |--------|-------|
 | [`decode-hotpath/`](decode-hotpath/) | The decode linear layer (`y = W @ x`, batch-1 GEMV) — the single most important op in single-user LLM inference. Twelve CUDA kernels as an optimization ladder (coalescing → fp16/int8/int4 quantization → DP4A → vectorization), a batched-decode sweep (register blocking, lane-owned batches, smem tiling), a cache-cold measurement methodology, and a guided tutorial. Includes raw benchmark logs (RTX 5090). |
+| [`python-profiling/`](python-profiling/) | Eight Python profiling methods (cProfile, line_profiler, tracemalloc, memory_profiler, py-spy, timeit, wall, resource) compared on accuracy / overhead / usability across nine common-pattern workloads, with ground truth known by construction. Includes raw benchmark logs (CPython 3.12.11). |
+| [`cuda-profiling/`](cuda-profiling/) | Seven CUDA profiling tools (wall ± sync, cProfile, py-spy, torch.profiler, nsys, ncu) scored on the same three axes against a CUDA-event oracle on an async decode-style torch loop. Includes raw benchmark logs (RTX 5090). |
 
 More folders are on the way.
 

@@ -1,0 +1,6 @@
+bin/
+.scratch/
+*.o
+*.swp
+*~
+__pycache__/
