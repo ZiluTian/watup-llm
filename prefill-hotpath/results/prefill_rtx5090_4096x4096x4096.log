@@ -1,0 +1,35 @@
+Prefill hot path: Y = X @ W^T,  X is 4096 x 4096, W is 4096 x 4096 (33.6 MB in fp16 each)
+
+Device: NVIDIA GeForce RTX 5090   Peak HBM BW: 1792 GB/s   L2 cache: 100.7 MB
+
+  [ring] rotating over 12 x 67.1 MB copies (X+W) to defeat L2
+
+kernel                          ms    TFLOPs % of peak   speedup rel.err vs fp32
+v0 naive fp32              78.9274       1.7      0.8%     1.00x       0.0001%
+v1 fp32 smem tile           5.9579      23.1     10.6%    13.25x       0.0001%
+v2 fp16 smem tile           2.9023      47.4     21.8%    27.19x       0.0147%
+v3 fp16 reg-block 4x4       4.5722      30.1     13.8%    17.26x       0.0293%
+v4 fp16 cp.async dblbuf     3.3298      41.3     19.0%    23.70x       0.0293%
+v5 fp16 tensor core         1.7591      78.1     35.9%    44.87x       0.0293%
+v6 int8 tensor core         1.3984      98.3     45.2%    56.44x       1.2259%
+gemv-fp16 (decode v2)      21.5064       6.4      2.9%     3.67x       0.0293%
+cuBLAS sgemm (fp32)         2.3716      58.0     26.6%    33.28x       0.0000%
+cuBLAS hgemm (peak)         0.6317     217.6    100.0%   124.94x       0.0359%
+
+Prompt-length sweep (N = 4096, K = 4096, fp16, self-tuning):
+M       winner                    ms    TFLOPs  % of peak     rel.err
+1       gemv-fp16             0.0223       1.5       0.7%     0.0289%
+2       gemv-fp16             0.0244       2.8       1.3%     0.0294%
+4       gemv-fp16             0.0340       3.9       1.8%     0.0296%
+8       v5 tensor core        0.0399       6.7       3.1%     0.0292%
+16      v5 tensor core        0.0417      12.9       5.9%     0.0292%
+32      v5 tensor core        0.0440      24.4      11.2%     0.0294%
+64      v5 tensor core        0.0480      44.7      20.6%     0.0294%
+128     v5 tensor core        0.0732      58.7      27.0%     0.0293%
+256     v5 tensor core        0.1239      69.3      31.9%     0.0293%
+512     v5 tensor core        0.2332      73.7      33.9%     0.0293%
+1024    v5 tensor core        0.4583      75.0      34.5%     0.0293%
+4096    v5 tensor core        1.7730      77.5      35.6%     0.0293%
+
+Roofline (measured): peak 1792 GB/s HBM, 218 TFLOP/s (cuBLAS hgemm) -> knee at 121 FLOP/byte
+At M = 4096 the layer is at 1365 FLOP/byte (compute bound); the crossover M* ~= 256.
